@@ -11,8 +11,7 @@
 // The temporal denoiser should therefore be considered a proof of concept rather than a complete solution.
 // The GTAO pass should also be combined only in the indirect lighting phase, rather than as a post process. 
 //
-// Note: Shaders in ThreeJS are represented as strings. Shader examples can often use string arrays
-// for each line resulting in an unreadable mess. I chose to use ES6 Template Literals 
+// Note: Shaders in ThreeJS are represented as strings. I chose to use ES6 Template Literals 
 // to retain a significant amount of readability and allow for syntax highlighting in my editor.
 
 import {
@@ -74,10 +73,10 @@ var GTAOShader = {
 		uniform mat4 cameraProjectionMatrix;
 		uniform mat4 cameraInverseProjectionMatrix;
 
-		uniform float intensity;	// Intenisty of the GTAO effect. (1 is physically correct)
-		uniform float distance;		// distance in world space units to trace for occlusion 
-		uniform uint frameCount;	// Number of frames rendered
-		uniform vec4 size;			// Window w & h (xy) and 1 / window w & h (zw)
+		uniform float intensity;	// Intensity of the GTAO effect. (1.0 is physically correct)
+		uniform float distance;		// Distance in world space units to trace for occlusion.
+		uniform uint frameCount;	// Number of frames rendered.
+		uniform vec4 size;			// Window width/height (xy) and inverse (zw).
 
 		// RGBA depth
 		#include <packing>
@@ -99,8 +98,8 @@ var GTAOShader = {
 			return offsets[ frameCount / 6u  % 4u];
 		}
 
+		//[Drobot2014a] Low Level Optimizations for GCN
 		vec3 fastSqrt( const in vec3 vec ) {
-			//[Drobot2014a] Low Level Optimizations for GCN
 			return intBitsToFloat( 0x1FBD1DF5 + ( floatBitsToInt( vec ) >> 1 ));
 		}
 
@@ -190,15 +189,12 @@ var GTAOShader = {
 			vd += -cos( thetas.y - thetas.z ) + n_trig.x + thetas.y * n_trig.y;
 			vd = vd * proj_n_length;
 
-			// The integral for cosine weighting on slide 61 is divided by pi instead of 2 * pi on slide 59.
-			// i.e. (vd * 0.25 * 2) == (vd * 0.5)
-			// It is unclear if this is correct, but it appears to me to more closely match the behaviour shown in
-			// the slides. It also reduces the undesired effect of inaccurately occluded surfaces at grazing angles.
-			vd = vd * 0.5;
+			vd = vd * 0.25;
 			#else 
 			// Visibility of slice (uniform weighting)
 			vec3 thetas = fastAcos( vec3 ( horizons , 0.0 ) );
 			float vd = 1.0 - cos( thetas.x ) + 1.0 - cos ( thetas.y );
+			vd = vd * 0.5;	// The integral for uniform weighting on slide 59 is divided by 2 * pi instead of pi on slide 61.
 			#endif
 
 			return vd;
@@ -276,7 +272,7 @@ var GTAOShader = {
 			vec3 viewPosition = getViewPosition( vUv, depth, viewZ );
 
 			// Make sure gtaoDistance is view-independent.
-			// I would normally use dfdx to get pixel deltas, but I want to make sure depth and viewZ stay the same.
+			// I would normally use dfdx to get pixel deltas, but I need depth and viewZ to stay the same.
 			vec3 offsetPos = getViewPosition( vUv + size.zw, depth, viewZ );
 			float viewDelta = abs( offsetPos.x - viewPosition.x );
 
