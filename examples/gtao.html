@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>three.js webgl - post processing - Ground Truth Ambient Occlusion (GTAO)</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<link type="text/css" rel="stylesheet" href="main.css">
+	</head>
+	<body>
+		<div id="info">
+			<a href="https://threejs.org" target="_blank" rel="noopener noreferrer">three.js</a> - Ground Truth Ambient Occlusion (GTAO)<br/>
+			by Alex Grace (template by <a href="https://threejs.org/examples/webgl_postprocessing_sao.html">Ludobaka / Ben Houston)</a>
+		</div>
+
+		<script type="module">
+
+			import * as THREE from '../build/three.module.js';
+
+			import Stats from './jsm/libs/stats.module.js';
+			import { GUI } from './jsm/libs/dat.gui.module.js';
+
+			import { TrackballControls } from './jsm/controls/TrackballControls.js';
+			import { EffectComposer } from './jsm/postprocessing/EffectComposer.js';
+			import { RenderPass } from './jsm/postprocessing/RenderPass.js';
+			import { GammaCorrectionShader } from './jsm/shaders/GammaCorrectionShader.js';
+			import { ShaderPass } from './jsm/postprocessing/ShaderPass.js';
+			import { GTAOPass } from './jsm/postprocessing/GTAOPass.js';
+			import { HDRCubeTextureLoader } from './jsm/loaders/HDRCubeTextureLoader.js';
+			import { SMAAPass } from './jsm/postprocessing/SMAAPass.js';
+
+			var container, stats;
+			var camera, scene, renderer, controls;
+			var composer, renderPass, gtaoPass, smaaPass, gammaCorrectComposer, activeComposer;
+			var hdrCubeMap, hdrCubeRenderTarget;
+			var group;
+			var dropdown;
+			var allowExposure, showHDR;
+
+			var spheres;
+
+			init();
+			animate();
+
+			function init() {
+
+				container = document.createElement( 'div' );
+				document.body.appendChild( container );
+
+				var width = window.innerWidth || 1;
+				var height = window.innerHeight || 1;
+				var devicePixelRatio = window.devicePixelRatio || 1;
+
+				var canvas = document.createElement( 'canvas' );
+				var context = canvas.getContext( 'webgl2', { antialias: true } );
+
+				renderer = new THREE.WebGLRenderer( { antialias: true, canvas: canvas, context: context} );
+				renderer.setClearColor( 0x000000 );
+				renderer.setPixelRatio( devicePixelRatio );
+				renderer.setSize( width, height );
+				renderer.physicallyCorrectLights = true;
+				renderer.toneMapping = THREE.LinearToneMapping;
+
+				document.body.appendChild( renderer.domElement );
+
+				camera = new THREE.PerspectiveCamera( 65, width / height, 1, 100 );
+				camera.position.z = 7;
+				controls = new TrackballControls( camera, renderer.domElement );
+
+				scene = new THREE.Scene();
+
+				group = new THREE.Object3D();
+				scene.add( group );
+
+				spheres = [];
+
+				var geometry = new THREE.SphereBufferGeometry( 3, 48, 24 );
+
+				for ( var i = 0; i < 120; i ++ ) {
+
+					var col = new THREE.Color();
+					col.setHSL( Math.random(), 1.0, 0.3 );
+
+					var beautyMat = new THREE.MeshStandardMaterial();
+					//beautyMat.roughness = 0.5 * Math.random() + 0.25;
+					beautyMat.roughness = Math.random();
+					beautyMat.metalness = 0;
+					beautyMat.color = col;
+
+					var albedoMat = new THREE.MeshBasicMaterial();
+					albedoMat.color = col;
+
+					var mesh = new THREE.Mesh( geometry, albedoMat );	// Rendering albedoMat first.
+					mesh.position.x = Math.random() * 4 - 2;
+					mesh.position.y = Math.random() * 4 - 2;
+					mesh.position.z = Math.random() * 4 - 2;
+					mesh.rotation.x = Math.random();
+					mesh.rotation.y = Math.random();
+					
+					// Set up different passes' materials in userData
+					mesh.userData['beautyMat'] = beautyMat;
+					mesh.userData['albedoMat'] = albedoMat;
+
+					mesh.rotation.z = Math.random();
+
+					spheres.push(mesh);
+
+					mesh.scale.x = mesh.scale.y = mesh.scale.z = Math.random() * 0.2 + 0.05;
+					group.add( mesh );
+
+				}
+
+				THREE.DefaultLoadingManager.onLoad = function ( ) {
+
+					pmremGenerator.dispose();
+
+				};
+
+
+				var hdrUrls = [ 'px.hdr', 'nx.hdr', 'py.hdr', 'ny.hdr', 'pz.hdr', 'nz.hdr' ];
+				hdrCubeMap = new HDRCubeTextureLoader()
+					.setPath( './textures/cube/pisaHDR/' )
+					.setDataType( THREE.UnsignedByteType )
+					.load( hdrUrls, function () {
+
+						hdrCubeRenderTarget = pmremGenerator.fromCubemap( hdrCubeMap );
+
+						hdrCubeMap.magFilter = THREE.LinearFilter;
+						hdrCubeMap.needsUpdate = true;
+
+						for( var x = 0; x < spheres.length; x++ ) {
+							spheres[x].userData['beautyMat'].envMap = hdrCubeRenderTarget.texture
+							spheres[x].userData['beautyMat'].needsUpdate = true;
+						}
+					} );
+
+				var pmremGenerator = new THREE.PMREMGenerator( renderer );
+				pmremGenerator.compileCubemapShader();
+
+				renderer.outputEncoding = THREE.sRGBEncoding;
+
+				stats = new Stats();
+				container.appendChild( stats.dom );
+
+				composer = new EffectComposer( renderer );
+				renderPass = new RenderPass( scene, camera );
+				composer.addPass( renderPass );
+				gtaoPass = new GTAOPass( scene, camera, false, true );
+				composer.addPass( gtaoPass );
+				smaaPass = new SMAAPass( window.innerWidth * renderer.getPixelRatio(), window.innerHeight * renderer.getPixelRatio() );
+				composer.addPass( smaaPass );
+
+				gammaCorrectComposer = new EffectComposer( renderer );
+				gammaCorrectComposer.addPass( renderPass );
+				gammaCorrectComposer.addPass( gtaoPass );
+				const gammaCorrectionPass = new ShaderPass(GammaCorrectionShader)
+				gammaCorrectComposer.addPass(gammaCorrectionPass);	// Only for beauty pass.
+				gammaCorrectComposer.addPass( smaaPass );
+
+
+				activeComposer = gammaCorrectComposer;
+				allowExposure = true;
+				showHDR = true;
+
+				// Init gui
+				var gui = new GUI( { width: 300 } );
+				dropdown = gui.add( gtaoPass.params, 'output', {
+					'Beauty': GTAOPass.OUTPUT.Beauty,
+					'Beauty+GTAO': GTAOPass.OUTPUT.Default,
+					'GTAO': GTAOPass.OUTPUT.GTAO,
+					'Albedo': GTAOPass.OUTPUT.Albedo,
+					'Depth': GTAOPass.OUTPUT.Depth,
+					'Normal': GTAOPass.OUTPUT.Normal
+				} ).onChange( function ( value ) {
+
+					gtaoPass.params.output = parseInt( value );
+
+					if (value == GTAOPass.OUTPUT.Albedo) {
+						showHDR = false;
+					}
+					else {
+						showHDR = true;
+					}
+
+					if (value == GTAOPass.OUTPUT.Beauty || value == GTAOPass.OUTPUT.Default) {
+						activeComposer = gammaCorrectComposer;
+						allowExposure = true;
+					}
+					else {
+						activeComposer = composer;
+						allowExposure = false;
+					}
+
+				} );
+
+
+				//dropdown.setValue(GTAOPass.OUTPUT.GTAO);
+
+				gui.add( gtaoPass.params, 'exposure', 0, 10, 0.01 );
+				gui.add( gtaoPass.params, 'gtaoIntensity', 0, 1 );
+				gui.add( gtaoPass.params, 'gtaoStepPrecision', 0, 4, 1 );
+				gui.add( gtaoPass.params, 'gtaoDistance', 0, 5 );
+				gui.add( gtaoPass.params, 'gtaoCosineWeighting' );
+				gui.add( gtaoPass.params, 'gtaoMultiBounce' );
+				//gui.add( gtaoPass.params, 'gtaoHalfRes' ).onFinishChange(function() { onWindowResize(); });
+				gui.add( gtaoPass.params, 'gtaoSpatialDenoise' );
+				gui.add( gtaoPass.params, 'gtaoBlurRadius', 0, 200 );
+				gui.add( gtaoPass.params, 'gtaoBlurStdDev', 0.5, 150 );
+				gui.add( gtaoPass.params, 'gtaoBlurDepthCutoff', 0.0, 0.1 );
+				gui.add( gtaoPass.params, 'gtaoTemporalDenoise' );
+				gui.add( gtaoPass.params, 'gtaoTemporalFrameWeighting', 0.0, 1.0 );
+
+				window.addEventListener( 'resize', onWindowResize, false );
+
+			}
+
+			function onWindowResize() {
+				var width = window.innerWidth || 1;
+				var height = window.innerHeight || 1;
+
+				camera.aspect = width / height;
+				camera.updateProjectionMatrix();
+				renderer.setSize( width, height );
+
+				composer.setSize( width, height );
+				gammaCorrectComposer.setSize( width, height );
+			}
+
+			function animate() {
+
+				requestAnimationFrame( animate );
+
+				controls.update();
+
+				stats.begin();
+				render();
+				stats.end();
+
+			}
+
+			function render() {
+				if ( showHDR ) {
+					scene.background = hdrCubeMap;
+				} else {
+					scene.background = null;
+				}
+
+				var timer = performance.now();
+
+				activeComposer.render();
+
+				if ( allowExposure ) {
+					renderer.toneMappingExposure = gtaoPass.params.exposure;
+				} else {
+					renderer.toneMappingExposure = 1.0;
+				}
+
+			}
+
+		</script>
+	</body>
+</html>
