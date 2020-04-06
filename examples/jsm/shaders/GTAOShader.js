@@ -26,6 +26,7 @@ var GTAOShader = {
 		"COSINE_WEIGHTING": 1,
 		"NORMAL_TEXTURE": 0,
 		"DEPTH_PACKING": 1,
+		"ART_DIRECTION": 1,
 		"BEGIN_DEPTH_FADE": 0.985,
 		"END_DEPTH_FADE": 0.995,
 		"MAX_TRACE_LENGTH": 512.0
@@ -196,6 +197,15 @@ var GTAOShader = {
 			float vd = 1.0 - cos( thetas.x ) + 1.0 - cos ( thetas.y );
 			vd = vd * 0.5;	// The integral for uniform weighting on slide 59 is divided by 2 * pi instead of pi on slide 61.
 			#endif
+
+			#if ART_DIRECTION
+			// I can't find any mathematical justification for this, but it just looks better to me.
+			// It minimises unwanted fringing which appears to be a limitation of the 
+			// screen-space technique, as it can also be seen in the slides. (slide 60 and 65)
+			// Further work would investigate this in comparison with an equivalent Monte Carlo algorithm.
+			vd = vd * 2.0; 
+			#endif
+
 
 			return vd;
 		}
